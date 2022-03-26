@@ -8,6 +8,8 @@ CRGB leds[NUM_LEDS];
 
 // COLOR
 int hue = 100;
+int lerp_start_hue = 100;
+int to_hue = 100;
 int saturation = 255;
 float brightness = 20;
 int max_brightness = 100;
@@ -41,6 +43,16 @@ const int LED2 = 11;
 const int LED3 = 12;
 const int LED4 = 13;
 
+// LERP
+bool do_lerp = true;
+const int lerp_length = 50;
+int cur_lerp = 1;
+
+void LERP() {
+    hue = abs(lerp_start_hue - to_hue) / lerp_length * cur_lerp;
+    cur_lerp++;
+    set_color();
+}
 
 void set_color() {
     for (int i = 0; i < NUM_LEDS; i++) { leds[i] = CHSV(hue, saturation, brightness); }
@@ -109,6 +121,7 @@ void change_mode() {
     case 0:
         digitalWrite(LED1, HIGH);
 
+        lerp_start_hue = hue;
         hue = 0;
         set_color();
         break;
@@ -128,7 +141,7 @@ void change_mode() {
 }
 
 void setup() {
-    delay(3000);
+    delay(2000);
 
     pinMode(button, INPUT_PULLUP);
     pinMode(LED1, OUTPUT);
