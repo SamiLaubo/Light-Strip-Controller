@@ -18,6 +18,14 @@ constexpr int PIN_BUTTON =  2;
 constexpr int PIN_POT1 =   A0;
 constexpr int PIN_POT2 =   A1;
 
+// VALUES
+constexpr int LERP_LENGTH =         50;
+constexpr int START_BRIGHTNESS =    20;
+constexpr int MAX_BRIGHTNESS =     100;
+constexpr int MAX_VOLTAGE =          5; // V
+constexpr int MAX_AMPERE =       10000; // A
+
+
 // -- BUTTON --
 class BUTTON
 {
@@ -64,7 +72,7 @@ private:
 
 public:
     POTENTIOMETER(int pin);
-    bool update();
+    bool changed();
     int value() const;
 };
 
@@ -74,7 +82,7 @@ POTENTIOMETER::POTENTIOMETER(int pin)
         prev_val { 0 }, 
         max { 1023 } {}
 
-bool POTENTIOMETER::update()
+bool POTENTIOMETER::changed()
 {
     prev_val = curr_val;
     curr_val = analogRead(pin);
@@ -91,16 +99,19 @@ int POTENTIOMETER::value() const
 class BASE_MODE
 {
 public:
-    BASE_MODE(std::string name);
-    virtual void update(CRGB& leds, int saturation, int brightness) = 0;
+    BASE_MODE(std::string name, bool update_h);
+    virtual void update(CRGB (&leds)[], int hue, int saturation, int brightness) = 0;
     std::string get_name() const;
+    bool update_hue() const { return update_h; };
 
 protected:
     const std::string name;
+    const bool update_h;
 };
 
-BASE_MODE::BASE_MODE(std::string name)
-    :   name { name } {} 
+BASE_MODE::BASE_MODE(std::string name, bool update_h)
+    :   name { name },
+        update_h { update_h} {}
 
 std::string BASE_MODE::get_name() const 
 {
@@ -113,13 +124,13 @@ class RED : public BASE_MODE
 {
 public:
     RED(std::string name);
-    void update(CRGB& leds, int saturation, int brightness) override;
+    void update(CRGB (&leds)[], int hue, int saturation, int brightness) override;
 };
 
 RED::RED(std::string name)
-    :   BASE_MODE(name) {}
+    :   BASE_MODE(name, false) {}
 
-void RED::update(CRGB& leds, int saturation, int brightness)
+void RED::update(CRGB (&leds)[], int hue, int saturation, int brightness)
 {
     for (int i = 0; i < NUM_LEDS; i++) {
         leds[i] = CHSV(0, saturation, brightness);  // Hue = 0 -> Red
@@ -132,16 +143,35 @@ class RAINBOW : public BASE_MODE
 {
 public:
     RAINBOW(std::string name);
-    void update(CRGB& leds, int saturation, int brightness) override;
+    void update(CRGB (&leds)[], int hue, int saturation, int brightness) override;
 };
 
 RAINBOW::RAINBOW(std::string name)
-    :   BASE_MODE(name) {}
+    :   BASE_MODE(name, false) {}
 
-void RAINBOW::update(CRGB& leds, int saturation, int brightness)
+void RAINBOW::update(CRGB (&leds)[], int hue, int saturation, int brightness)
 {
     for (int i = 0; i < NUM_LEDS; i++) {
         leds[i] = CHSV(100, saturation, brightness);  // Hue = 0 -> Red
+    }
+}
+
+
+// -- COLOR light strip --
+class RAINBOW : public BASE_MODE
+{
+public:
+    RAINBOW(std::string name);
+    void update(CRGB (&leds)[], int hue, int saturation, int brightness) override;
+};
+
+RAINBOW::RAINBOW(std::string name)
+    :   BASE_MODE(name, true) {}
+
+void RAINBOW::update(CRGB (&leds)[], int hue, int saturation, int brightness)
+{
+    for (int i = 0; i < NUM_LEDS; i++) {
+        leds[i] = CHSV(hue, saturation, brightness);
     }
 }
 
@@ -156,8 +186,9 @@ private:
 public:
     MODE();
     void operator++();
-    void update(CRGB& leds, int saturation, int brightness);
+    void update(CRGB (&leds)[], int hue, int saturation, int brightness);
     std::string get_name() const;
+    bool update_hue() const;
 };
 
 MODE::MODE()
@@ -173,14 +204,19 @@ void MODE::operator++()
     mode = (mode + 1) % modes.size();
 }
 
-void MODE::update(CRGB& leds, int saturation, int brightness)
+void MODE::update(CRGB (&leds)[], int hue, int saturation, int brightness)
 {
-    modes[mode] -> update(leds, saturation, brightness);
+    modes[mode] -> update(leds, hue, saturation, brightness);
 }
 
 std::string MODE::get_name() const
 {
     return modes[mode] -> get_name();
+}
+
+bool MODE::update_hue() const
+{
+    return modes[mode] -> update_hue();
 }
 
 
@@ -190,41 +226,109 @@ class CONTROLLER
 private:
     // Hardware
     BUTTON button;
-    POTENTIOMETER pot_brightness;
     POTENTIOMETER pot_hue;
+    POTENTIOMETER pot_brightness;
 
     // LED strip
     CRGB leds[NUM_LEDS];
     CRGB temp_leds[NUM_LEDS];
 
     // Mode
-    enum class mode;
-    mode operator++(mode& m);
+    MODE mode;
 
     // Linear interpolation
     bool do_lerp;
-    const int lerp_length;
+    const double lerp_length;
     int cur_lerp;
 
     void change_mode();
+    void update_hue();
 
 public:
-    CONTROLLER();
+    CONTROLLER(int button_pin, int pot_hue_pin, int pot_brightness_pin, int lerp_length);
 
     void update();
 };
 
+CONTROLLER::CONTROLLER(int button_pin, int pot_hue_pin, int pot_brightness_pin, int lerp_length)
+    :   button { BUTTON(button_pin) },
+        pot_hue { POTENTIOMETER(pot_hue_pin) },
+        pot_brightness { POTENTIOMETER(pot_brightness_pin) },
+        mode { MODE() },
+        do_lerp { false },
+        lerp_length { lerp_length },
+        cur_lerp { 1 } 
+{
+    FastLED.addLeds<WS2812, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS);
+    FastLED.setMaxPowerInVoltsAndMilliamps(MAX_VOLTAGE, MAX_AMPERE);
+
+    // Fade in
+    for (int i = 0; i < START_BRIGHTNESS; i++) {
+        mode.update(leds, 0, 255, i);
+        FastLED.show();
+        delay(50);
+    }
+}
+
 void CONTROLLER::update()
 {
+    // CHECK BUTTON
+    if (button.pressed()) change_mode();
+
+    // CHECK POTENTIOMETER HUE
+    if (mode.update_hue())
+    {
+        if (pot_hue.changed()) update_hue();
+    }
+
+    // CHECK POTENTIOMETER BRIGHTNESS
+    if (pot_brightness.changed())
+    {
+        FastLED.setBrightness(min(pot_hue.value(), MAX_BRIGHTNESS));
+    }
 
 }
 
+void CONTROLLER::update_hue()
+{
+    if (do_lerp)
+    {
+        mode.update(temp_leds, pot_hue.value(), 255, pot_brightness.value());
+
+        for (int i = 0; i < NUM_LEDS; i++) {
+            leds[i] = (uint8_t)leds[i] + (uint8_t)(abs((uint8_t)leds[i] - (uint8_t)temp_leds[i]) / lerp_length * cur_lerp);
+        }
+
+        cur_lerp++;
+        if (cur_lerp == lerp_length)
+        {
+            do_lerp = false;
+            cur_lerp = 1;
+        }
+
+    }
+    else
+    {
+        mode.update(leds, pot_hue.value(), 255, pot_brightness.value());
+    }
+
+}
+
+
+// SETUP AND LOOP
+CONTROLLER controller;
+
 void setup()
 {
+    delay(2000); // For hardware safety
 
+    CONTROLLER controller(PIN_BUTTON, PIN_A0, PIN_A1, LERP_LENGTH);
 }
 
 void loop()
 {
+    controller.update();
+    FastLED.show();
 
+    delay(1);
 }
