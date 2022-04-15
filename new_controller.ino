@@ -152,20 +152,20 @@ RAINBOW::RAINBOW(std::string name)
 void RAINBOW::update(CRGB (&leds)[], int hue, int saturation, int brightness)
 {
     for (int i = 0; i < NUM_LEDS; i++) {
-        leds[i] = CHSV(100, saturation, brightness);  // Hue = 0 -> Red
+        leds[i] = CHSV(255 / NUM_LEDS * i, saturation, brightness);  // Hue = 0 -> Red
     }
 }
 
 
 // -- COLOR light strip --
-class RAINBOW : public BASE_MODE
+class HUE : public BASE_MODE
 {
 public:
-    RAINBOW(std::string name);
+    HUE(std::string name);
     void update(CRGB (&leds)[], int hue, int saturation, int brightness) override;
 };
 
-RAINBOW::RAINBOW(std::string name)
+HUE::HUE(std::string name)
     :   BASE_MODE(name, true) {}
 
 void RAINBOW::update(CRGB (&leds)[], int hue, int saturation, int brightness)
@@ -311,7 +311,15 @@ void CONTROLLER::update_hue()
     {
         mode.update(leds, pot_hue.value(), 255, pot_brightness.value());
     }
+}
+// KOMMENTAR:
+// Kanskje kun ha pot_brightness.velue på FastLED.setBright og ikke i hsv
 
+void CONTROLLER::change_mode()
+{
+    ++mode;
+    do_lerp = true;
+    cur_lerp = 1;
 }
 
 
